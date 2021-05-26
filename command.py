@@ -4,6 +4,7 @@ import dataframe_image as dfi
 from discord.ext import commands
 import pymongo
 import os
+import asyncio
 
 
 intents = discord.Intents.default()
@@ -14,7 +15,6 @@ os.chdir(r"C:\Users\roman\TriviaBot Dev Version")
 
 client.remove_command('help')
 client.database_client = pymongo.MongoClient("")
-client.db = client.database_client['database']
 client.user_collection = client.db['users']
 
 
@@ -67,9 +67,17 @@ async def trivia(ctx, correct_answer, url):
 
 
 @trivia.error
+async def _error(ctx, error):
+    if isinstance(error, commands.CommandError):
+        await ctx.send('Failed to run command: !trivia [correct option A =1, B = 2, etc] [image url]')
+
+
+@trivia.error
 async def clear_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
         await ctx.send("You do not have permission to use this command")
+    elif isinstance(error, commands.CommandError):
+        await ctx.send('Failed to run command: !trivia [correct option A =1, B = 2, etc] [image url]')
 
 
 @client.event
@@ -119,7 +127,27 @@ async def congrats(ctx):
 
     client.triviaMessage = 0
 
-    await give_points()
+    embed = discord.Embed(
+        title="These users answered correctly!",
+        color=discord.Colour.blue(),
+    )
+
+    name_list = []
+
+    await give_points(name_list)
+
+    dataframe_columns = {'Name': name_list}
+
+    dataframe = pd.DataFrame(dataframe_columns)
+    dataframe = dataframe.style.set_properties(**{'text-align': 'left'})
+    dataframe = dataframe.hide_index()
+
+    dfi.export(dataframe, 'correct_players.png')
+    file = discord.File("correct_players.png")
+
+    embed.set_image(url='attachment://correct_players.png')
+
+    await ctx.send(file=file, embed=embed)
 
 
 @congrats.error
@@ -128,14 +156,13 @@ async def clear_error(ctx, error):
         await ctx.send("You do not have permission to use this command")
 
 
-async def give_points():
+async def give_points(name_list):
     users = client.user_collection.find()
-
     for user in users:
-        id, answer, points = user['_id'], user['answer'], user['number_correct']
+        id, answer, points, name = user['_id'], user['answer'], user['number_correct'], user['display_name']
         if str(answer) == str(client.triviaAnswer):
-            print('got it right!')
             client.user_collection.update_one({"_id": str(id)}, {"$set": {'number_correct': points + 1}})
+            name_list.append(name)
         client.user_collection.update_one({"_id": str(id)}, {"$set": {'answer': 0}})
 
 
@@ -171,10 +198,9 @@ async def leaderboard(ctx):
         ranks.append(rank + 1)
 
     dataframe_columns = {'Rank': ranks, 'Name': userNames, 'Points': userScores}
-    pd.set_option('max_rows', 5)
 
     dataframe = pd.DataFrame(dataframe_columns)
-    dataframe = dataframe.head(5)
+    dataframe = dataframe.head(10)
     dataframe = dataframe.style.set_properties(**{'text-align': 'left'})
     dataframe = dataframe.hide_index()
 
